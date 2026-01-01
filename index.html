@@ -31,10 +31,10 @@
     <div class="list" id="list"></div>
 
     <div class="content">
-      <!-- 出題（Owner） -->
-      <div class="box" id="createBox" style="display:none;">
+      <!-- ✅ 出題區塊：預設就顯示（不靠 JS 才看得到） -->
+      <div class="box" id="createBox">
         <h3>出題（Only Owner）</h3>
-        <div id="ownerHint" class="muted"></div>
+        <div id="ownerHint" class="muted">尚未連線</div>
 
         <div style="margin-top:8px;">題目文字</div>
         <input id="newQText" style="width:100%;" placeholder="例如：下週誰會遲到？"/>
@@ -42,7 +42,7 @@
         <div style="margin-top:8px;">選項（用逗號分隔）</div>
         <input id="newQOpts" style="width:100%;" placeholder="例如：A,B,C"/>
 
-        <button id="btnCreate" style="margin-top:10px;">Create Question</button>
+        <button id="btnCreate" style="margin-top:10px;" disabled>Create Question</button>
       </div>
 
       <!-- 題目詳情 -->
