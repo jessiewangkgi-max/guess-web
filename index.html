@@ -14,12 +14,19 @@
   <hr/>
 
   <div id="qc"></div>
-
   <div id="ui"></div>
 
+  <!-- 下注區 -->
+  <div id="betUI" style="display:none; margin-top:12px;">
+    <h3>下注</h3>
+    <select id="betOpt"></select>
+    <input id="betAmt" type="number" placeholder="下注金額（例如 100）"/>
+    <button id="btnBet">Approve + Bet</button>
+  </div>
+
   <div style="margin-top:12px;">
-    <button id="btnClaim" style="display:none;">Claim（答對領獎）</button>
-    <button id="btnRefund" style="display:none;">Refund（無人中獎退款）</button>
+    <button id="btnClaim" style="display:none;">Claim</button>
+    <button id="btnRefund" style="display:none;">Refund</button>
   </div>
 
   <div id="txmsg" style="margin-top:10px;"></div>
