@@ -3,19 +3,12 @@ const GUESS_ADDRESS = "0x483aee89c55737eceaab61c4ffe0e74b0f88e4a8";
 let provider, signer, me, guessSigner, guessRead;
 let currentQid = 0;
 
-function set(id, text) {
-  document.getElementById(id).textContent = text;
-}
-function show(id, yes) {
-  document.getElementById(id).style.display = yes ? "" : "none";
-}
+function set(id, text) { document.getElementById(id).textContent = text; }
+function show(id, yes) { document.getElementById(id).style.display = yes ? "" : "none"; }
 
 async function connect() {
   try {
-    if (!window.ethereum) {
-      alert("請先安裝 MetaMask");
-      return;
-    }
+    if (!window.ethereum) { alert("請先安裝 MetaMask"); return; }
 
     const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
     me = accounts[0];
@@ -24,7 +17,6 @@ async function connect() {
 
     provider = new ethers.BrowserProvider(window.ethereum);
     signer = await provider.getSigner();
-
     const network = await provider.getNetwork();
 
     set("msg", "✅ 已連線錢包：" + me);
@@ -35,12 +27,10 @@ async function connect() {
       return;
     }
 
-    // read & signer contract
     guessRead = new ethers.Contract(GUESS_ADDRESS, GUESS_ABI, provider);
     guessSigner = new ethers.Contract(GUESS_ADDRESS, GUESS_ABI, signer);
 
     await render();
-
   } catch (err) {
     set("txmsg", "❌ " + (err.message || err));
     console.error(err);
@@ -60,19 +50,17 @@ async function render() {
     return;
   }
 
-  // 先固定顯示第 0 題（後面再做列表）
   currentQid = 0;
   const q = await guessRead.getQuestion(currentQid);
 
   const text = q[0];
   const options = q[1];
-  const status = Number(q[2]); // 0 Open, 1 Resolved
+  const status = Number(q[2]);
   const win = Number(q[3]);
   const totalPoolRaw = q[4].toString();
 
   const statusText = status === 0 ? "Open（可下注）" : "Resolved（已公布，不可下注）";
 
-  // UI 顯示
   const lines = [];
   lines.push(`<h2>Q${currentQid}: ${text}</h2>`);
   lines.push(`<div>狀態：<b>${statusText}</b></div>`);
@@ -84,18 +72,25 @@ async function render() {
     lines.push(`<div><b>答案：</b>${win}（${options[win]}）</div>`);
 
     const alreadyClaimed = await guessRead.claimed(currentQid, me);
+    const totalWinStake = await guessRead.totalStakedPerOption(currentQid, win);
 
     if (alreadyClaimed) {
       lines.push(`<div style="color:green;">你已經領過（claimed=true）</div>`);
     } else {
       const myWinStake = await guessRead.userStake(currentQid, me, win);
+
       if (myWinStake > 0n) {
         lines.push(`<div style="color:green;">你押中答案，stake(raw)=${myWinStake.toString()}，可以 Claim</div>`);
         show("btnClaim", true);
       } else {
-        lines.push(`<div style="color:#999;">你沒有押中答案（或未下注）</div>`);
-        // refund 只有「無人中獎」才會成功；先給你按鈕也行，但我先保守顯示
-        show("btnRefund", true);
+        // ✅ 只有 totalWinStake == 0 才能 refund
+        if (totalWinStake === 0n) {
+          lines.push(`<div style="color:#999;">無人押中答案，可以 Refund（退回自己押的總額）</div>`);
+          show("btnRefund", true);
+        } else {
+          lines.push(`<div style="color:#999;">你沒有押中答案（或未下注）</div>`);
+          lines.push(`<div style="color:#999;">本題有人押中（winning option 總押注 raw=${totalWinStake.toString()}），因此不能 Refund</div>`);
+        }
       }
     }
   } else {
