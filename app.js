@@ -1,32 +1,19 @@
-// ✅ 下注合約地址（你提供的）
 const GUESS_ADDRESS = "0x483aee89c55737eceaab61c4ffe0e74b0f88e4a8";
-
-// Sepolia
 const SEPOLIA_CHAIN_ID_HEX = "0xaa36a7";
 
 let provider, signer, me;
 let guessRead, guessSigner, token;
 let tokenDecimals = 0;
 let tokenSymbol = "";
-
 let currentQid = 0;
 
-function set(id, text) {
-  document.getElementById(id).textContent = text;
-}
-function show(id, yes) {
-  document.getElementById(id).style.display = yes ? "" : "none";
-}
-function setHTML(id, html) {
-  document.getElementById(id).innerHTML = html;
-}
+function set(id, text) { document.getElementById(id).textContent = text; }
+function show(id, yes) { document.getElementById(id).style.display = yes ? "" : "none"; }
+function setHTML(id, html) { document.getElementById(id).innerHTML = html; }
 
 async function connect() {
   try {
-    if (!window.ethereum) {
-      alert("請先安裝 MetaMask");
-      return;
-    }
+    if (!window.ethereum) { alert("請先安裝 MetaMask"); return; }
 
     const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
     me = accounts[0];
@@ -35,40 +22,34 @@ async function connect() {
     set("msg", "✅ 已連線錢包：" + me);
     set("chain", "chainId: " + chainIdHex);
 
-    // 預設：出題按鈕先鎖住
-    set("ownerHint", "讀取中...");
-    document.getElementById("btnCreate").disabled = true;
+    // ✅ 出題區塊永遠顯示、按鈕永遠可按（不再做 owner 檢核）
+    set("ownerHint", "✅ 已連線（不檢核 owner，直接允許出題；若鏈上不允許會交易失敗）");
+    document.getElementById("btnCreate").disabled = false;
 
     if (chainIdHex !== SEPOLIA_CHAIN_ID_HEX) {
       setHTML("list", "❌ 請切到 Sepolia");
       setHTML("detail", "<div class='muted'>請切到 Sepolia 才能使用出題/下注</div>");
-      set("ownerHint", "❌ 請切到 Sepolia 才能使用出題/下注功能");
       return;
     }
 
     provider = new ethers.BrowserProvider(window.ethereum);
     signer = await provider.getSigner();
 
-    // guess contract
     guessRead = new ethers.Contract(GUESS_ADDRESS, GUESS_ABI, provider);
     guessSigner = new ethers.Contract(GUESS_ADDRESS, GUESS_ABI, signer);
 
-    // token contract (from guess)
+    // token from guess (如果 betToken() 不存在，會在這裡報錯)
     const tokenAddr = await guessRead.betToken();
     token = new ethers.Contract(tokenAddr, ERC20_ABI, signer);
     tokenDecimals = await token.decimals();
     tokenSymbol = await token.symbol();
     document.getElementById("tokenSym").textContent = tokenSymbol ? `(${tokenSymbol})` : "";
 
-    // owner / create
-    const owner = (await guessRead.owner()).toLowerCase();
-    const isOwner = owner === me.toLowerCase();
-    set("ownerHint", isOwner ? "✅ 你是 owner（可出題）" : `❌ 你不是 owner（owner = ${owner}）`);
-    document.getElementById("btnCreate").disabled = !isOwner;
-
-    // load list + default detail
     await loadList();
-    await renderDetail(0);
+
+    // 如果至少有題目，就顯示第一題；沒有就提示
+    const cnt = Number(await guessRead.questionsCount());
+    if (cnt > 0) await renderDetail(0);
 
   } catch (err) {
     set("txmsg", "❌ " + (err.shortMessage || err.message || err));
@@ -84,7 +65,7 @@ async function loadList() {
 
   if (count === 0) {
     list.innerHTML = `<div class="muted">目前沒有題目</div>`;
-    setHTML("detail", `<div class="muted">請先由 owner 出題</div>`);
+    setHTML("detail", `<div class="muted">目前沒有題目，你可以直接出題</div>`);
     show("betUI", false);
     show("btnClaim", false);
     show("btnRefund", false);
@@ -99,6 +80,7 @@ async function loadList() {
     div.className = "item" + (i === currentQid ? " active" : "");
     div.textContent = `Q${i} | ${statusText} | ${q[0]}`;
     div.onclick = () => renderDetail(i);
+
     list.appendChild(div);
   }
 }
@@ -117,9 +99,9 @@ async function renderDetail(qid) {
     const q = await guessRead.getQuestion(qid);
     const text = q[0];
     const options = q[1];
-    const status = Number(q[2]); // 0 Open, 1 Resolved
+    const status = Number(q[2]);
     const win = Number(q[3]);
-    const totalPool = q[4]; // BigInt
+    const totalPool = q[4];
 
     let html = `<h2>${text}</h2>`;
     html += `<div>狀態：<b>${status === 0 ? "Open" : "Resolved"}</b></div>`;
@@ -127,13 +109,12 @@ async function renderDetail(qid) {
     html += `<ol>` + options.map((o,i)=>`<li>${i}: ${o}</li>`).join("") + `</ol>`;
 
     if (status === 0) {
-      // Open → show bet UI
+      // Open
       const sel = document.getElementById("betOpt");
       sel.innerHTML = options.map((o,i)=>`<option value="${i}">${i}: ${o}</option>`).join("");
       show("betUI", true);
-      html += `<div class="muted">（可下注）</div>`;
     } else {
-      // Resolved → show answer + claim/refund rules
+      // Resolved
       html += `<div><b>答案：</b>${win}（${options[win]}）</div>`;
 
       const alreadyClaimed = await guessRead.claimed(qid, me);
@@ -144,15 +125,13 @@ async function renderDetail(qid) {
       } else {
         const myWinStake = await guessRead.userStake(qid, me, win);
         if (myWinStake > 0n) {
-          html += `<div style="color:green;">你押中答案，可 Claim（stake raw=${myWinStake.toString()}）</div>`;
+          html += `<div style="color:green;">你押中答案，可 Claim</div>`;
           show("btnClaim", true);
+        } else if (totalWinStake === 0n) {
+          html += `<div class="muted">無人押中答案，可以 Refund</div>`;
+          show("btnRefund", true);
         } else {
-          if (totalWinStake === 0n) {
-            html += `<div class="muted">無人押中答案，可以 Refund（退回自己押的總額）</div>`;
-            show("btnRefund", true);
-          } else {
-            html += `<div class="muted">你沒有押中（或未下注），且有人押中，因此不能 Refund</div>`;
-          }
+          html += `<div class="muted">你沒有押中（或未下注），且有人押中，因此不能 Refund</div>`;
         }
       }
     }
@@ -183,7 +162,6 @@ async function createQuestionNow() {
 
     set("txmsg", "✅ 出題成功");
 
-    // refresh list & jump to newest
     const count = Number(await guessRead.questionsCount());
     await loadList();
     await renderDetail(count - 1);
@@ -198,13 +176,10 @@ async function betNow() {
   try {
     const opt = Number(document.getElementById("betOpt").value);
     const amt = Number(document.getElementById("betAmt").value);
-
     if (!amt || amt <= 0) { alert("請輸入下注金額"); return; }
 
-    // 你輸入 100 → 轉成 100 * 10^decimals
     const amount = BigInt(amt) * 10n ** BigInt(tokenDecimals);
 
-    // approve if needed
     const allowance = await token.allowance(me, GUESS_ADDRESS);
     if (allowance < amount) {
       set("txmsg", "送出 approve…");
