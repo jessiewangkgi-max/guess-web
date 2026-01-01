@@ -5,48 +5,26 @@ const CONFIG = {
   chainIdDec: 11155111,
   chainIdHex: "0xaa36a7",
 
-  // 你的新下注合約
+  // 下注合約（你新的）
   guessAddress: "0x9673251fb579945642170c86c2AD731Db2b87d9b",
 
-  // 一次授權大額度，避免同事每次下注都要 approve
-  approveAmountRaw: "1000000000", // 10 億 raw
+  // 介面「顆數」的授權額度（不是 raw）
+  approveAmountTokens: "1000000000", // 10 億顆（同事不會一直要 approve）
 };
 
 // ===== Guess ABI =====
 const GUESS_ABI = [
-  // Ownable
-  {
-    inputs: [],
-    name: "owner",
-    outputs: [{ internalType: "address", name: "", type: "address" }],
-    stateMutability: "view",
-    type: "function",
-  },
+  { inputs: [], name: "owner", outputs: [{ internalType: "address", name: "", type: "address" }], stateMutability: "view", type: "function" },
+  { inputs: [], name: "betToken", outputs: [{ internalType: "address", name: "", type: "address" }], stateMutability: "view", type: "function" },
 
-  // IERC20 public immutable betToken; => auto getter betToken()
-  {
-    inputs: [],
-    name: "betToken",
-    outputs: [{ internalType: "address", name: "", type: "address" }],
-    stateMutability: "view",
-    type: "function",
-  },
-
-  // views
-  {
-    inputs: [],
-    name: "questionsCount",
-    outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
-    stateMutability: "view",
-    type: "function",
-  },
+  { inputs: [], name: "questionsCount", outputs: [{ internalType: "uint256", name: "", type: "uint256" }], stateMutability: "view", type: "function" },
   {
     inputs: [{ internalType: "uint256", name: "questionId", type: "uint256" }],
     name: "getQuestion",
     outputs: [
       { internalType: "string", name: "text", type: "string" },
       { internalType: "string[]", name: "options", type: "string[]" },
-      { internalType: "uint8", name: "status", type: "uint8" }, // enum Status
+      { internalType: "uint8", name: "status", type: "uint8" }, // 0 Open, 1 Resolved
       { internalType: "uint256", name: "winningOption", type: "uint256" },
       { internalType: "uint256", name: "totalPool", type: "uint256" },
     ],
@@ -54,7 +32,6 @@ const GUESS_ABI = [
     type: "function",
   },
 
-  // admin
   {
     inputs: [
       { internalType: "string", name: "text", type: "string" },
@@ -76,36 +53,26 @@ const GUESS_ABI = [
     type: "function",
   },
 
-  // users
   {
     inputs: [
       { internalType: "uint256", name: "questionId", type: "uint256" },
       { internalType: "uint256", name: "optionId", type: "uint256" },
-      { internalType: "uint256", name: "amount", type: "uint256" },
+      { internalType: "uint256", name: "amount", type: "uint256" }, // raw
     ],
     name: "bet",
     outputs: [],
     stateMutability: "nonpayable",
     type: "function",
   },
-  {
-    inputs: [{ internalType: "uint256", name: "questionId", type: "uint256" }],
-    name: "claim",
-    outputs: [],
-    stateMutability: "nonpayable",
-    type: "function",
-  },
-  {
-    inputs: [{ internalType: "uint256", name: "questionId", type: "uint256" }],
-    name: "refund",
-    outputs: [],
-    stateMutability: "nonpayable",
-    type: "function",
-  },
+  { inputs: [{ internalType: "uint256", name: "questionId", type: "uint256" }], name: "claim", outputs: [], stateMutability: "nonpayable", type: "function" },
+  { inputs: [{ internalType: "uint256", name: "questionId", type: "uint256" }], name: "refund", outputs: [], stateMutability: "nonpayable", type: "function" },
 ];
 
-// ===== ERC20 ABI（只需要 allowance/approve/balanceOf）=====
+// ===== ERC20 ABI（加上 decimals/symbol）=====
 const ERC20_ABI = [
+  { inputs: [], name: "decimals", outputs: [{ internalType: "uint8", name: "", type: "uint8" }], stateMutability: "view", type: "function" },
+  { inputs: [], name: "symbol", outputs: [{ internalType: "string", name: "", type: "string" }], stateMutability: "view", type: "function" },
+  { inputs: [{ internalType: "address", name: "account", type: "address" }], name: "balanceOf", outputs: [{ internalType: "uint256", name: "", type: "uint256" }], stateMutability: "view", type: "function" },
   {
     inputs: [
       { internalType: "address", name: "owner", type: "address" },
@@ -119,18 +86,11 @@ const ERC20_ABI = [
   {
     inputs: [
       { internalType: "address", name: "spender", type: "address" },
-      { internalType: "uint256", name: "amount", type: "uint256" },
+      { internalType: "uint256", name: "amount", type: "uint256" }, // raw
     ],
     name: "approve",
     outputs: [{ internalType: "bool", name: "", type: "bool" }],
     stateMutability: "nonpayable",
-    type: "function",
-  },
-  {
-    inputs: [{ internalType: "address", name: "account", type: "address" }],
-    name: "balanceOf",
-    outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
-    stateMutability: "view",
     type: "function",
   },
 ];
@@ -142,6 +102,9 @@ let tokenRead, tokenWrite;
 let tokenAddress;
 let ownerAddress;
 let isOwner = false;
+
+let TOKEN_DECIMALS = 18;
+let TOKEN_SYMBOL = "TOKEN";
 
 const $ = (id) => document.getElementById(id);
 
@@ -171,6 +134,18 @@ function statusText(status) {
   return Number(status) === 0 ? "Open（可下注）" : "Resolved（已公布，不可下注）";
 }
 
+// 顯示用：一律「不顯示小數點」（只顯示整數顆）
+function formatTokensNoDecimal(rawBN) {
+  const s = ethers.formatUnits(rawBN, TOKEN_DECIMALS);
+  return String(s).split(".")[0]; // 直接截斷小數
+}
+
+// 介面輸入的「顆數」→ 轉 raw
+function parseTokensToRaw(humanStr) {
+  // humanStr like "100"
+  return ethers.parseUnits(humanStr, TOKEN_DECIMALS);
+}
+
 function mustHaveDom() {
   const required = [
     "btnConnect",
@@ -188,9 +163,7 @@ function mustHaveDom() {
     "log",
   ];
   const missing = required.filter((id) => !$(id));
-  if (missing.length) {
-    throw new Error("index.html 缺少元素 id：" + missing.join(", "));
-  }
+  if (missing.length) throw new Error("index.html 缺少元素 id：" + missing.join(", "));
 }
 
 async function connect() {
@@ -235,9 +208,14 @@ async function connect() {
     tokenRead = new ethers.Contract(tokenAddress, ERC20_ABI, provider);
     tokenWrite = new ethers.Contract(tokenAddress, ERC20_ABI, signer);
 
+    // 讀 token 資訊
+    TOKEN_DECIMALS = Number(await tokenRead.decimals());
+    TOKEN_SYMBOL = await tokenRead.symbol();
+
     log(`✅ Guess 合約：${CONFIG.guessAddress}`);
     log(`✅ owner：${ownerAddress}`);
     log(`✅ betToken：${tokenAddress}`);
+    log(`✅ token：${TOKEN_SYMBOL}（decimals=${TOKEN_DECIMALS}）`);
     log(isOwner ? "✅ 你是 owner（顯示管理區）" : "ℹ️ 你不是 owner（只能下注/領獎/退款）");
 
     $("adminBox").style.display = isOwner ? "block" : "none";
@@ -278,13 +256,12 @@ async function loadQuestions() {
     list.appendChild(row);
   }
 
-  // 預設顯示最後一題
   await showQuestion(n - 1);
 }
 
 async function getAllowanceRaw() {
   const a = await tokenRead.allowance(account, CONFIG.guessAddress);
-  return BigInt(a.toString());
+  return a; // BigInt-like BN
 }
 
 async function showQuestion(qid) {
@@ -296,18 +273,20 @@ async function showQuestion(qid) {
   const winningOption = q.winningOption;
   const totalPool = q.totalPool;
 
+  const totalPoolHumanInt = formatTokensNoDecimal(totalPool);
+
+  // 管理區：方便你直接填當前題目ID
+  if (isOwner && $("resolveQid")) $("resolveQid").value = String(qid);
+
   let html = `
     <h2 style="margin-top:0;">${escapeHtml(text)}</h2>
     <div>狀態：<b>${statusText(status)}</b></div>
-    <div>總池（raw）：<b>${totalPool.toString()}</b></div>
+    <div>總池：<b>${totalPoolHumanInt}</b> ${escapeHtml(TOKEN_SYMBOL)}</div>
     <div style="opacity:.75;">下注 Token：${tokenAddress}</div>
     <hr/>
     <div style="margin-bottom:8px;"><b>選項</b></div>
     <ol>${options.map((o, idx) => `<li>${idx}: ${escapeHtml(o)}</li>`).join("")}</ol>
   `;
-
-  // 管理區：方便你直接填當前題目ID
-  if (isOwner && $("resolveQid")) $("resolveQid").value = String(qid);
 
   if (status === 1) {
     html += `<div style="margin-top:10px;">答案：<b>${winningOption.toString()}</b>（${escapeHtml(options[Number(winningOption)] || "")}）</div>`;
@@ -317,15 +296,16 @@ async function showQuestion(qid) {
         <button id="btnRefund">Refund（無人中獎退款）</button>
       </div>
     `;
-    $("detail").innerHTML = html;
 
+    $("detail").innerHTML = html;
     $("btnClaim").onclick = () => claim(qid);
     $("btnRefund").onclick = () => refund(qid);
     return;
   }
 
-  // Open：下注區（含 allowance/approve）
-  const allowance = await getAllowanceRaw();
+  // Open：下注區（顆數輸入）
+  const allowanceRaw = await getAllowanceRaw();
+  const allowanceHumanInt = formatTokensNoDecimal(allowanceRaw);
 
   html += `
     <hr/>
@@ -333,14 +313,16 @@ async function showQuestion(qid) {
     <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
       <label>選項ID</label>
       <input id="betOption" type="number" min="0" step="1" style="width:90px;" value="0"/>
-      <label>金額（raw）</label>
+      <label>金額（顆）</label>
       <input id="betAmount" type="number" min="1" step="1" style="width:140px;" value="100"/>
       <button id="btnApprove">Approve</button>
       <button id="btnBet">Bet</button>
     </div>
     <div style="opacity:.75; margin-top:6px;">
-      allowance(raw)：<b>${allowance.toString()}</b>
-      ｜ Approve 會授權 <b>${CONFIG.approveAmountRaw}</b> raw
+      allowance：<b>${allowanceHumanInt}</b> ${escapeHtml(TOKEN_SYMBOL)}
+      ｜ Approve 會授權 <b>${escapeHtml(CONFIG.approveAmountTokens)}</b> 顆
+      <br/>
+      <span style="opacity:.75;">（介面輸入 100 就是 100 顆，會自動換算 raw 上鏈；畫面顯示不顯示小數點）</span>
     </div>
   `;
 
@@ -358,10 +340,11 @@ async function approve() {
     btn.disabled = true;
     btn.textContent = "授權中...";
 
-    const amount = BigInt(CONFIG.approveAmountRaw);
-    log(`➡️ approve(spender=${CONFIG.guessAddress}, amount=${amount.toString()})`);
+    // 「顆數」→ raw
+    const amountRaw = parseTokensToRaw(String(CONFIG.approveAmountTokens));
 
-    const tx = await tokenWrite.approve(CONFIG.guessAddress, amount);
+    log(`➡️ approve(spender=${CONFIG.guessAddress}, amount=${CONFIG.approveAmountTokens} ${TOKEN_SYMBOL})`);
+    const tx = await tokenWrite.approve(CONFIG.guessAddress, amountRaw);
     log(`⏳ approve tx: ${tx.hash}`);
     await tx.wait();
 
@@ -384,12 +367,16 @@ async function bet(qid) {
 
   try {
     const optionId = Number($("betOption").value);
-    const amount = BigInt($("betAmount").value || "0");
-    if (amount <= 0n) return alert("金額必須 > 0");
+    const humanStr = String(($("betAmount").value || "")).trim(); // 顆數
+    if (!humanStr || Number(humanStr) <= 0) return alert("金額（顆）必須 > 0");
 
-    const allowance = await getAllowanceRaw();
-    if (allowance < amount) {
-      log(`❌ allowance 不足（${allowance.toString()} < ${amount.toString()}），請先 Approve`);
+    // 顆 → raw
+    const amountRaw = parseTokensToRaw(humanStr);
+
+    // allowance 檢查要用 raw 比較
+    const allowanceRaw = await getAllowanceRaw();
+    if (allowanceRaw < amountRaw) {
+      log(`❌ allowance 不足，請先 Approve（你要下注 ${humanStr} 顆）`);
       alert("Allowance 不足，請先按 Approve 再下注。");
       return;
     }
@@ -397,8 +384,8 @@ async function bet(qid) {
     btn.disabled = true;
     btn.textContent = "送出交易中...";
 
-    log(`➡️ bet(qid=${qid}, option=${optionId}, amount=${amount.toString()})`);
-    const tx = await guessWrite.bet(qid, optionId, amount);
+    log(`➡️ bet(qid=${qid}, option=${optionId}, amount=${humanStr} ${TOKEN_SYMBOL})`);
+    const tx = await guessWrite.bet(qid, optionId, amountRaw);
     log(`⏳ bet tx: ${tx.hash}`);
     await tx.wait();
 
@@ -458,7 +445,6 @@ async function createQuestionFromUI() {
     if (!text) return alert("題目不可空白");
     if (!raw) return alert("選項不可空白（例如 A,B,C 或 [\"A\",\"B\"]）");
 
-    // 支援兩種輸入：A,B,C 或 JSON array
     let options;
     if (raw.startsWith("[")) {
       options = JSON.parse(raw);
@@ -514,12 +500,10 @@ async function resolveFromUI() {
 
 // ===== bind =====
 window.addEventListener("DOMContentLoaded", () => {
-  // connect 之前先隱藏 adminBox
   if ($("adminBox")) $("adminBox").style.display = "none";
-
   if ($("btnConnect")) $("btnConnect").onclick = connect;
 
-  // ✅ 直接綁定（不再用 window.xxx || alert(...)）
+  // 直接綁定（不要再用 window.xxx || alert(...)）
   if ($("btnCreate")) $("btnCreate").onclick = createQuestionFromUI;
   if ($("btnResolve")) $("btnResolve").onclick = resolveFromUI;
 });
