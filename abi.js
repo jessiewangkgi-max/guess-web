@@ -22,6 +22,16 @@ const GUESS_ABI = [
   },
   {
     "type": "function",
+    "name": "totalStakedPerOption",
+    "inputs": [
+      { "name": "questionId", "type": "uint256" },
+      { "name": "optionId", "type": "uint256" }
+    ],
+    "outputs": [{ "type": "uint256" }],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "userStake",
     "inputs": [
       { "name": "questionId", "type": "uint256" },
