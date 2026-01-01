@@ -53,18 +53,19 @@ const GUESS_ABI = [
   },
 
   // tx
-  {
-    "type": "function",
-    "name": "claim",
-    "inputs": [{ "name": "questionId", "type": "uint256" }],
-    "outputs": [],
-    "stateMutability": "nonpayable"
+  { "type": "function", "name": "bet", "inputs": [
+      { "name": "questionId", "type": "uint256" },
+      { "name": "optionId", "type": "uint256" },
+      { "name": "amount", "type": "uint256" }
+    ], "outputs": [], "stateMutability": "nonpayable"
   },
-  {
-    "type": "function",
-    "name": "refund",
-    "inputs": [{ "name": "questionId", "type": "uint256" }],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  }
+  { "type": "function", "name": "claim", "inputs": [{ "name": "questionId", "type": "uint256" }], "outputs": [], "stateMutability": "nonpayable" },
+  { "type": "function", "name": "refund", "inputs": [{ "name": "questionId", "type": "uint256" }], "outputs": [], "stateMutability": "nonpayable" }
+];
+
+const ERC20_ABI = [
+  "function approve(address spender, uint256 amount) external returns (bool)",
+  "function allowance(address owner, address spender) external view returns (uint256)",
+  "function decimals() external view returns (uint8)",
+  "function symbol() external view returns (string)"
 ];
