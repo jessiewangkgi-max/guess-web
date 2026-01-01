@@ -1,309 +1,426 @@
 /* global ethers */
 
 const CONFIG = {
-  // 你的下注合約（InternalGuessGame）
-  guessAddress: "0x483aee89c55737eceaab61c4ffe0e74b0f88e4a8",
-
-  // A方案：不要從 guess.betToken() 讀，直接固定用你自己知道的 KGIT token address
-  tokenAddress: "0x07e7AF255D6e349a9E8fDC2D5ecB0479C6641945",
-
-  // 只接受 Sepolia
-  requiredChainId: 11155111,
+  chainIdDec: 11155111, // Sepolia
+  chainIdHex: "0xaa36a7",
+  guessAddress: "0x9673251fb579945642170c86c2AD731Db2b87d9b", // ✅你的新下注合約
 };
 
-const GuessABI = [
+// ===== Guess Contract ABI (對應你貼的合約) =====
+const GUESS_ABI = [
+  // Ownable
+  {
+    inputs: [],
+    name: "owner",
+    outputs: [{ internalType: "address", name: "", type: "address" }],
+    stateMutability: "view",
+    type: "function",
+  },
   // views
-  "function questionsCount() view returns (uint256)",
-  "function getQuestion(uint256 questionId) view returns (string text, string[] options, uint8 status, uint256 winningOption, uint256 totalPool)",
-  "function optionsCount(uint256 questionId) view returns (uint256)",
+  {
+    inputs: [],
+    name: "questionsCount",
+    outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [{ internalType: "uint256", name: "questionId", type: "uint256" }],
+    name: "getQuestion",
+    outputs: [
+      { internalType: "string", name: "text", type: "string" },
+      { internalType: "string[]", name: "options", type: "string[]" },
+      { internalType: "uint8", name: "status", type: "uint8" }, // enum Status
+      { internalType: "uint256", name: "winningOption", type: "uint256" },
+      { internalType: "uint256", name: "totalPool", type: "uint256" },
+    ],
+    stateMutability: "view",
+    type: "function",
+  },
 
-  // user/admin actions (我們不做 owner 檢核，直接讓你按就送交易)
-  "function createQuestion(string text, string[] options) returns (uint256)",
-  "function resolve(uint256 questionId, uint256 winningOptionId)",
-  "function bet(uint256 questionId, uint256 optionId, uint256 amount)",
-  "function claim(uint256 questionId)",
-  "function refund(uint256 questionId)",
+  // admin
+  {
+    inputs: [
+      { internalType: "string", name: "text", type: "string" },
+      { internalType: "string[]", name: "options", type: "string[]" },
+    ],
+    name: "createQuestion",
+    outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
+    stateMutability: "nonpayable",
+    type: "function",
+  },
+  {
+    inputs: [
+      { internalType: "uint256", name: "questionId", type: "uint256" },
+      { internalType: "uint256", name: "winningOptionId", type: "uint256" },
+    ],
+    name: "resolve",
+    outputs: [],
+    stateMutability: "nonpayable",
+    type: "function",
+  },
 
-  // helpful public mappings (optional, 有就讀)
-  "function totalStakedPerOption(uint256 questionId, uint256 optionId) view returns (uint256)",
-  "function userStake(uint256 questionId, address user, uint256 optionId) view returns (uint256)",
+  // users
+  {
+    inputs: [
+      { internalType: "uint256", name: "questionId", type: "uint256" },
+      { internalType: "uint256", name: "optionId", type: "uint256" },
+      { internalType: "uint256", name: "amount", type: "uint256" },
+    ],
+    name: "bet",
+    outputs: [],
+    stateMutability: "nonpayable",
+    type: "function",
+  },
+  {
+    inputs: [{ internalType: "uint256", name: "questionId", type: "uint256" }],
+    name: "claim",
+    outputs: [],
+    stateMutability: "nonpayable",
+    type: "function",
+  },
+  {
+    inputs: [{ internalType: "uint256", name: "questionId", type: "uint256" }],
+    name: "refund",
+    outputs: [],
+    stateMutability: "nonpayable",
+    type: "function",
+  },
 ];
 
-const ERC20ABI = [
-  "function approve(address spender, uint256 amount) returns (bool)",
-  "function allowance(address owner, address spender) view returns (uint256)",
-  "function balanceOf(address owner) view returns (uint256)",
-  "function symbol() view returns (string)",
-];
+let provider;
+let signer;
+let account;
+let guessRead;
+let guessWrite;
+let ownerAddress;
+let isOwner = false;
 
-let provider, signer, userAddress;
-let guessRead, guessWrite, tokenRead, tokenWrite;
-
+// ---------- helpers ----------
 const $ = (id) => document.getElementById(id);
 
-function setText(id, text, cls) {
-  const el = $(id);
-  el.className = cls || "";
-  el.textContent = text;
+function log(msg) {
+  const el = $("log");
+  if (!el) return;
+  el.textContent = (el.textContent || "") + msg + "\n";
 }
 
-function fmtAddr(a) {
+function clearLog() {
+  const el = $("log");
+  if (!el) return;
+  el.textContent = "";
+}
+
+function shortAddr(a) {
   if (!a) return "";
   return a.slice(0, 6) + "..." + a.slice(-4);
 }
 
-function parseOptionsCSV(s) {
-  return s
-    .split(",")
-    .map((x) => x.trim())
-    .filter((x) => x.length > 0);
+function statusText(status) {
+  // enum Status { Open, Resolved }
+  return Number(status) === 0 ? "Open（可下注）" : "Resolved（已公布，不可下注）";
 }
 
-function statusLabel(statusU8) {
-  // 你的合約 enum Status { Open=0, Resolved=1 }
-  if (Number(statusU8) === 0) return "Open";
-  if (Number(statusU8) === 1) return "Resolved";
-  return `Unknown(${statusU8})`;
+function requireEls() {
+  const need = [
+    "btnConnect",
+    "wallet",
+    "chain",
+    "questions",
+    "detail",
+    "adminBox",
+    "qText",
+    "qOptions",
+    "btnCreate",
+    "resolveQid",
+    "resolveWin",
+    "btnResolve",
+    "log",
+  ];
+  const missing = need.filter((id) => !$(id));
+  if (missing.length) {
+    console.error("Missing elements:", missing);
+    throw new Error("index.html 缺少必要的元素：" + missing.join(", "));
+  }
 }
 
-async function requireEvm() {
-  if (!window.ethereum) throw new Error("MetaMask 未安裝或未啟用");
-}
-
+// ---------- connect ----------
 async function connect() {
+  clearLog();
   try {
-    await requireEvm();
-    provider = new ethers.BrowserProvider(window.ethereum);
-    const accounts = await provider.send("eth_requestAccounts", []);
-    userAddress = ethers.getAddress(accounts[0]);
-    signer = await provider.getSigner();
+    requireEls();
 
-    const net = await provider.getNetwork();
-    setText("connStatus", `✅ 已連線錢包：${userAddress}`, "ok");
-    setText("chainStatus", `chainId: 0x${net.chainId.toString(16)}（${Number(net.chainId)}）`, "muted");
-
-    if (Number(net.chainId) !== CONFIG.requiredChainId) {
-      setText("chainStatus", `❌ 請切到 Sepolia（11155111），目前是 ${Number(net.chainId)}`, "err");
+    if (!window.ethereum) {
+      alert("MetaMask not found");
+      return;
+    }
+    if (!window.ethers) {
+      alert("ethers not found (請確認 index.html 已載入 ethers.umd.min.js)");
       return;
     }
 
-    // contracts
-    guessRead = new ethers.Contract(CONFIG.guessAddress, GuessABI, provider);
-    guessWrite = new ethers.Contract(CONFIG.guessAddress, GuessABI, signer);
+    provider = new ethers.BrowserProvider(window.ethereum);
 
-    tokenRead = new ethers.Contract(CONFIG.tokenAddress, ERC20ABI, provider);
-    tokenWrite = new ethers.Contract(CONFIG.tokenAddress, ERC20ABI, signer);
+    // request accounts
+    await provider.send("eth_requestAccounts", []);
+    signer = await provider.getSigner();
+    account = await signer.getAddress();
+
+    const network = await provider.getNetwork();
+    const chainId = Number(network.chainId);
+
+    $("wallet").textContent = `✅ 已連線錢包：${account}`;
+    $("chain").textContent = `chainId：${"0x" + chainId.toString(16)}（ethers: ${chainId}）`;
+
+    if (chainId !== CONFIG.chainIdDec) {
+      log(`❌ 請切到 Sepolia（chainId ${CONFIG.chainIdDec} / ${CONFIG.chainIdHex}）`);
+      alert("請切到 Sepolia 再重整頁面");
+      return;
+    }
+
+    guessRead = new ethers.Contract(CONFIG.guessAddress, GUESS_ABI, provider);
+    guessWrite = new ethers.Contract(CONFIG.guessAddress, GUESS_ABI, signer);
+
+    ownerAddress = await guessRead.owner();
+    isOwner = ownerAddress.toLowerCase() === account.toLowerCase();
+
+    log(`✅ Guess 合約：${CONFIG.guessAddress}`);
+    log(`✅ owner = ${ownerAddress}`);
+    log(isOwner ? "✅ 你是 owner（可出題/公布答案）" : "ℹ️ 你不是 owner（只能下注/claim/refund）");
+
+    // show/hide admin box
+    $("adminBox").style.display = isOwner ? "block" : "none";
 
     await loadQuestions();
   } catch (e) {
-    setText("connStatus", `❌ ${e.message || e}`, "err");
+    console.error(e);
+    log("❌ connect 失敗：" + (e?.message || e));
   }
 }
 
+// ---------- load list ----------
 async function loadQuestions() {
   try {
     const count = await guessRead.questionsCount();
-    setText("qCount", `questionsCount = ${count}`, "muted");
+    log(`✅ 合約題目數量 questionsCount = ${count.toString()}`);
 
-    const qList = $("qList");
-    qList.innerHTML = "";
+    const list = $("questions");
+    list.innerHTML = "";
 
     const n = Number(count);
-    for (let i = 0; i < n; i++) {
-      const [text, options, statusU8, winningOptionId, totalPool] = await guessRead.getQuestion(i);
-
-      const btn = document.createElement("button");
-      btn.onclick = () => showQuestion(i);
-
-      const st = statusLabel(statusU8);
-      btn.innerHTML = `<div><b>Q${i}</b> <span class="pill">${st}</span></div><div class="muted small">${text}</div>`;
-      qList.appendChild(btn);
-    }
-
     if (n === 0) {
-      qList.innerHTML = `<div class="muted" style="padding:12px;">目前沒有題目（可以用右側出題新增）</div>`;
-    } else {
-      // 預設顯示第一題
-      await showQuestion(0);
+      list.innerHTML = `<div style="opacity:.7;">目前沒有題目</div>`;
+      $("detail").innerHTML = "";
+      return;
     }
+
+    for (let i = 0; i < n; i++) {
+      const q = await guessRead.getQuestion(i);
+      const text = q.text;
+      const status = q.status;
+      const row = document.createElement("div");
+      row.className = "qrow";
+      row.style.cursor = "pointer";
+      row.style.padding = "10px";
+      row.style.border = "1px solid #ddd";
+      row.style.marginBottom = "8px";
+      row.textContent = `Q${i} | ${Number(status) === 0 ? "Open" : "Resolved"} | ${text}`;
+      row.onclick = () => showQuestion(i);
+      list.appendChild(row);
+    }
+
+    await showQuestion(n - 1);
   } catch (e) {
-    $("qList").innerHTML = `<div class="err" style="padding:12px;">❌ 讀取題目失敗：${e.message || e}</div>`;
+    console.error(e);
+    log("❌ 讀題目失敗：" + (e?.message || e));
   }
 }
 
-async function showQuestion(questionId) {
-  const wrap = $("qDetail");
-  wrap.innerHTML = "載入中…";
-
+// ---------- render detail ----------
+async function showQuestion(qid) {
   try {
-    const [text, options, statusU8, winningOptionId, totalPool] = await guessRead.getQuestion(questionId);
-    const st = statusLabel(statusU8);
+    const q = await guessRead.getQuestion(qid);
+    const text = q.text;
+    const options = q.options;
+    const status = Number(q.status);
+    const winningOption = q.winningOption;
+    const totalPool = q.totalPool;
 
-    // token symbol（拿得到就顯示，拿不到也不影響）
-    let sym = "TOKEN";
-    try { sym = await tokenRead.symbol(); } catch (_) {}
-
-    const optionsHtml = options
-      .map((opt, idx) => `<div>${idx}: ${opt}</div>`)
-      .join("");
-
-    let answerHtml = "";
-    if (st === "Resolved") {
-      const w = Number(winningOptionId);
-      const wText = options[w] ?? "";
-      answerHtml = `<div style="margin-top:10px;"><b>答案：</b>${w}（${wText}）</div>`;
-    }
-
-    // --- betting UI ---
-    const canBet = (st === "Open");
-
-    const betUI = canBet
-      ? `
-        <hr />
-        <h3 style="margin:10px 0;">下注</h3>
-        <div class="grid2">
-          <div>
-            <div class="muted small">選項（輸入 optionId）</div>
-            <input id="betOptionId" type="number" min="0" step="1" value="0" />
-          </div>
-          <div>
-            <div class="muted small">下注金額（A方案：直接用 raw，不管 decimals）</div>
-            <input id="betAmount" type="number" min="1" step="1" value="100" />
-          </div>
-        </div>
-
-        <div class="actions">
-          <button id="btnApprove">1) Approve</button>
-          <button id="btnBet">2) Bet</button>
-        </div>
-
-        <div id="betStatus" class="muted small" style="margin-top:10px;"></div>
-      `
-      : `
-        <hr />
-        <h3 style="margin:10px 0;">已公布（不可下注）</h3>
-        <div class="actions">
-          <button id="btnClaim">Claim（如果你押中）</button>
-          <button id="btnRefund">Refund（如果無人中獎）</button>
-        </div>
-        <div id="settleStatus" class="muted small" style="margin-top:10px;"></div>
-      `;
-
-    wrap.innerHTML = `
-      <div style="font-size:36px; font-weight:900;">${text}</div>
-
-      <div class="kv" style="margin-top:12px;">
-        <div class="muted">questionId</div><div>${questionId}</div>
-        <div class="muted">狀態</div><div><b>${st}</b></div>
-        <div class="muted">總池（raw）</div><div><b>${totalPool.toString()}</b> ${sym}</div>
-      </div>
-
-      <div style="margin-top:12px;">
-        <div class="muted"><b>選項</b></div>
-        <div style="margin-top:6px;">${optionsHtml}</div>
-        ${answerHtml}
-      </div>
-
-      ${betUI}
+    let html = `
+      <h2 style="margin-top:0;">${text}</h2>
+      <div>狀態：<b>${statusText(status)}</b></div>
+      <div>總池（raw）：<b>${totalPool.toString()}</b></div>
+      <hr/>
+      <div style="margin-bottom:8px;"><b>選項</b></div>
+      <ol>
+        ${options.map((o, idx) => `<li>${idx}: ${escapeHtml(o)}</li>`).join("")}
+      </ol>
     `;
 
-    // bind buttons
-    if (canBet) {
-      $("btnApprove").onclick = async () => approveThenStatus(questionId);
-      $("btnBet").onclick = async () => doBet(questionId);
+    if (status === 1) {
+      html += `<div style="margin-top:10px;">答案：<b>${winningOption.toString()}</b>（${escapeHtml(options[Number(winningOption)] || "")}）</div>`;
+      html += `
+        <div style="margin-top:12px; display:flex; gap:10px; flex-wrap:wrap;">
+          <button id="btnClaim">Claim（中獎領獎）</button>
+          <button id="btnRefund">Refund（無人中獎退款）</button>
+        </div>
+      `;
     } else {
-      $("btnClaim").onclick = async () => doClaim(questionId);
-      $("btnRefund").onclick = async () => doRefund(questionId);
+      // Open
+      html += `
+        <hr/>
+        <div style="margin-bottom:6px;"><b>下注</b></div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+          <label>選項ID</label>
+          <input id="betOption" type="number" min="0" step="1" style="width:90px;" value="0"/>
+          <label>金額（raw）</label>
+          <input id="betAmount" type="number" min="1" step="1" style="width:140px;" value="100"/>
+          <button id="btnBet">Bet</button>
+        </div>
+        <div style="opacity:.75; margin-top:6px;">
+          ※ 這裡的金額是 raw（不處理 decimals），你之前的合約行為就是這樣。
+        </div>
+      `;
+    }
+
+    if (isOwner) {
+      html += `
+        <hr/>
+        <div style="opacity:.85;">
+          <b>Owner 操作</b><br/>
+          你也可以用上方「公布答案」區塊操作，這裡只是提醒：Open 才能 resolve。
+        </div>
+      `;
+      $("resolveQid").value = String(qid);
+    }
+
+    $("detail").innerHTML = html;
+
+    // bind buttons
+    if (status === 1) {
+      $("btnClaim").onclick = () => claim(qid);
+      $("btnRefund").onclick = () => refund(qid);
+    } else {
+      $("btnBet").onclick = () => bet(qid);
     }
   } catch (e) {
-    wrap.innerHTML = `<div class="err">❌ 題目載入失敗：${e.message || e}</div>`;
+    console.error(e);
+    log("❌ 顯示題目失敗：" + (e?.message || e));
   }
 }
 
-async function approveThenStatus(questionId) {
+async function bet(qid) {
   try {
+    const optionId = Number($("betOption").value);
     const amount = BigInt($("betAmount").value || "0");
-    if (amount <= 0n) throw new Error("amount 必須 > 0");
-
-    setText("betStatus", "送出 approve 交易中…", "muted");
-    const tx = await tokenWrite.approve(CONFIG.guessAddress, amount);
-    setText("betStatus", `approve tx: ${tx.hash}（等待確認…）`, "muted");
+    if (amount <= 0n) {
+      alert("金額要 > 0");
+      return;
+    }
+    log(`➡️ bet(qid=${qid}, option=${optionId}, amount=${amount.toString()})`);
+    const tx = await guessWrite.bet(qid, optionId, amount);
+    log(`⏳ tx sent: ${tx.hash}`);
     await tx.wait();
-    setText("betStatus", "✅ approve 完成，現在可以按 Bet", "ok");
-  } catch (e) {
-    setText("betStatus", `❌ approve 失敗：${e.message || e}`, "err");
-  }
-}
-
-async function doBet(questionId) {
-  try {
-    const optionId = BigInt($("betOptionId").value || "0");
-    const amount = BigInt($("betAmount").value || "0");
-    if (amount <= 0n) throw new Error("amount 必須 > 0");
-
-    setText("betStatus", "送出 bet 交易中…", "muted");
-    const tx = await guessWrite.bet(BigInt(questionId), optionId, amount);
-    setText("betStatus", `bet tx: ${tx.hash}（等待確認…）`, "muted");
-    await tx.wait();
-    setText("betStatus", "✅ bet 完成", "ok");
-
-    // refresh
-    await showQuestion(questionId);
+    log("✅ 下注成功");
     await loadQuestions();
   } catch (e) {
-    setText("betStatus", `❌ bet 失敗：${e.message || e}`, "err");
+    console.error(e);
+    log("❌ 下注失敗：" + (e?.shortMessage || e?.message || e));
   }
 }
 
-async function doClaim(questionId) {
+async function claim(qid) {
   try {
-    setText("settleStatus", "送出 claim 交易中…", "muted");
-    const tx = await guessWrite.claim(BigInt(questionId));
-    setText("settleStatus", `claim tx: ${tx.hash}（等待確認…）`, "muted");
+    log(`➡️ claim(qid=${qid})`);
+    const tx = await guessWrite.claim(qid);
+    log(`⏳ tx sent: ${tx.hash}`);
     await tx.wait();
-    setText("settleStatus", "✅ claim 完成", "ok");
+    log("✅ Claim 成功");
+    await loadQuestions();
   } catch (e) {
-    setText("settleStatus", `❌ claim 失敗：${e.message || e}`, "err");
+    console.error(e);
+    log("❌ Claim 失敗：" + (e?.shortMessage || e?.message || e));
   }
 }
 
-async function doRefund(questionId) {
+async function refund(qid) {
   try {
-    setText("settleStatus", "送出 refund 交易中…", "muted");
-    const tx = await guessWrite.refund(BigInt(questionId));
-    setText("settleStatus", `refund tx: ${tx.hash}（等待確認…）`, "muted");
+    log(`➡️ refund(qid=${qid})`);
+    const tx = await guessWrite.refund(qid);
+    log(`⏳ tx sent: ${tx.hash}`);
     await tx.wait();
-    setText("settleStatus", "✅ refund 完成", "ok");
+    log("✅ Refund 成功");
+    await loadQuestions();
   } catch (e) {
-    setText("settleStatus", `❌ refund 失敗：${e.message || e}`, "err");
+    console.error(e);
+    log("❌ Refund 失敗：" + (e?.shortMessage || e?.message || e));
   }
 }
 
-async function createQuestion() {
+// ---------- admin actions ----------
+async function createQuestionFromUI() {
   try {
-    const text = $("newText").value.trim();
-    const options = parseOptionsCSV($("newOptions").value);
+    const text = $("qText").value.trim();
+    const raw = $("qOptions").value.trim();
+    if (!text) return alert("題目不可空白");
+    if (!raw) return alert("選項不可空白（用逗號分隔）");
 
-    if (!text) throw new Error("題目文字不能空");
-    if (options.length < 2) throw new Error("選項至少 2 個（用逗號分隔）");
+    // 支援：A,B,C 或 ["A","B","C"]
+    let options;
+    if (raw.startsWith("[")) {
+      options = JSON.parse(raw);
+    } else {
+      options = raw.split(",").map((s) => s.trim()).filter(Boolean);
+    }
+    if (!Array.isArray(options) || options.length < 2) {
+      return alert("選項至少 2 個");
+    }
 
-    setText("createStatus", "送出 createQuestion 交易中…", "muted");
+    log(`➡️ createQuestion(text="${text}", options=${JSON.stringify(options)})`);
     const tx = await guessWrite.createQuestion(text, options);
-    setText("createStatus", `createQuestion tx: ${tx.hash}（等待確認…）`, "muted");
+    log(`⏳ tx sent: ${tx.hash}`);
     await tx.wait();
-
-    setText("createStatus", "✅ 出題成功（已上鏈）", "ok");
-
-    // refresh
-    $("newText").value = "";
-    $("newOptions").value = "";
+    log("✅ 出題成功");
+    $("qText").value = "";
     await loadQuestions();
   } catch (e) {
-    // 這裡如果看到 missing revert data，通常是「合約 ABI/函式簽名不一致」或「合約本身 revert 沒理由」
-    setText("createStatus", `❌ 出題失敗：${e.shortMessage || e.message || e}`, "err");
+    console.error(e);
+    log("❌ 出題失敗：" + (e?.shortMessage || e?.message || e));
   }
 }
 
-// UI bind
-$("btnConnect").onclick = connect;
-$("btnCreate").onclick = createQuestion;
+async function resolveFromUI() {
+  try {
+    const qid = Number($("resolveQid").value);
+    const win = Number($("resolveWin").value);
+    log(`➡️ resolve(qid=${qid}, win=${win})`);
+    const tx = await guessWrite.resolve(qid, win);
+    log(`⏳ tx sent: ${tx.hash}`);
+    await tx.wait();
+    log("✅ 公布答案成功");
+    await loadQuestions();
+  } catch (e) {
+    console.error(e);
+    log("❌ 公布答案失敗：" + (e?.shortMessage || e?.message || e));
+  }
+}
+
+// ---------- ui bootstrap ----------
+function escapeHtml(s) {
+  return String(s)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+window.addEventListener("DOMContentLoaded", () => {
+  // bind
+  if ($("btnConnect")) $("btnConnect").onclick = connect;
+  if ($("btnCreate")) $("btnCreate").onclick = createQuestionFromUI;
+  if ($("btnResolve")) $("btnResolve").onclick = resolveFromUI;
+
+  // default admin box hidden until verified
+  if ($("adminBox")) $("adminBox").style.display = "none";
+});
