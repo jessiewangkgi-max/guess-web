@@ -1,4 +1,21 @@
 const GUESS_ABI = [
+  {
+  "type": "function",
+  "name": "owner",
+  "inputs": [],
+  "outputs": [{ "type": "address" }],
+  "stateMutability": "view"
+},
+{
+  "type": "function",
+  "name": "createQuestion",
+  "inputs": [
+    { "name": "text", "type": "string" },
+    { "name": "options", "type": "string[]" }
+  ],
+  "outputs": [{ "type": "uint256" }],
+  "stateMutability": "nonpayable"
+},
   // ✅ 新增：betToken() getter
   {
     "type": "function",
