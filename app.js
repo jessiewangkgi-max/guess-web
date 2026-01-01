@@ -35,8 +35,14 @@ async function connect() {
     set("msg", "✅ 已連線錢包：" + me);
     set("chain", "chainId: " + chainIdHex);
 
+    // 預設：出題按鈕先鎖住
+    set("ownerHint", "讀取中...");
+    document.getElementById("btnCreate").disabled = true;
+
     if (chainIdHex !== SEPOLIA_CHAIN_ID_HEX) {
       setHTML("list", "❌ 請切到 Sepolia");
+      setHTML("detail", "<div class='muted'>請切到 Sepolia 才能使用出題/下注</div>");
+      set("ownerHint", "❌ 請切到 Sepolia 才能使用出題/下注功能");
       return;
     }
 
@@ -54,10 +60,9 @@ async function connect() {
     tokenSymbol = await token.symbol();
     document.getElementById("tokenSym").textContent = tokenSymbol ? `(${tokenSymbol})` : "";
 
-    // owner / create UI
+    // owner / create
     const owner = (await guessRead.owner()).toLowerCase();
     const isOwner = owner === me.toLowerCase();
-    show("createBox", true);
     set("ownerHint", isOwner ? "✅ 你是 owner（可出題）" : `❌ 你不是 owner（owner = ${owner}）`);
     document.getElementById("btnCreate").disabled = !isOwner;
 
