@@ -22,9 +22,7 @@ async function connect() {
     set("msg", "✅ 已連線錢包：" + me);
     set("chain", "chainId: " + chainIdHex);
 
-    // ✅ 出題區塊永遠顯示、按鈕永遠可按（不再做 owner 檢核）
-    set("ownerHint", "✅ 已連線（不檢核 owner，直接允許出題；若鏈上不允許會交易失敗）");
-    document.getElementById("btnCreate").disabled = false;
+    set("hint", "✅ 已連線（不檢核 owner，直接允許出題；若鏈上不允許會交易失敗）");
 
     if (chainIdHex !== SEPOLIA_CHAIN_ID_HEX) {
       setHTML("list", "❌ 請切到 Sepolia");
@@ -38,7 +36,7 @@ async function connect() {
     guessRead = new ethers.Contract(GUESS_ADDRESS, GUESS_ABI, provider);
     guessSigner = new ethers.Contract(GUESS_ADDRESS, GUESS_ABI, signer);
 
-    // token from guess (如果 betToken() 不存在，會在這裡報錯)
+    // token
     const tokenAddr = await guessRead.betToken();
     token = new ethers.Contract(tokenAddr, ERC20_ABI, signer);
     tokenDecimals = await token.decimals();
@@ -46,8 +44,6 @@ async function connect() {
     document.getElementById("tokenSym").textContent = tokenSymbol ? `(${tokenSymbol})` : "";
 
     await loadList();
-
-    // 如果至少有題目，就顯示第一題；沒有就提示
     const cnt = Number(await guessRead.questionsCount());
     if (cnt > 0) await renderDetail(0);
 
@@ -80,7 +76,6 @@ async function loadList() {
     div.className = "item" + (i === currentQid ? " active" : "");
     div.textContent = `Q${i} | ${statusText} | ${q[0]}`;
     div.onclick = () => renderDetail(i);
-
     list.appendChild(div);
   }
 }
@@ -109,12 +104,10 @@ async function renderDetail(qid) {
     html += `<ol>` + options.map((o,i)=>`<li>${i}: ${o}</li>`).join("") + `</ol>`;
 
     if (status === 0) {
-      // Open
       const sel = document.getElementById("betOpt");
       sel.innerHTML = options.map((o,i)=>`<option value="${i}">${i}: ${o}</option>`).join("");
       show("betUI", true);
     } else {
-      // Resolved
       html += `<div><b>答案：</b>${win}（${options[win]}）</div>`;
 
       const alreadyClaimed = await guessRead.claimed(qid, me);
@@ -137,7 +130,6 @@ async function renderDetail(qid) {
     }
 
     setHTML("detail", html);
-
   } catch (err) {
     set("txmsg", "❌ render 失敗：" + (err.shortMessage || err.message || err));
     console.error(err);
@@ -193,7 +185,6 @@ async function betNow() {
 
     set("txmsg", "✅ 下注成功");
     await renderDetail(currentQid);
-
   } catch (err) {
     set("txmsg", "❌ 下注失敗：" + (err.shortMessage || err.message || err));
     console.error(err);
