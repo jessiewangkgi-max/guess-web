@@ -1,6 +1,8 @@
 const GUESS_ADDRESS = "0x483aee89c55737eceaab61c4ffe0e74b0f88e4a8";
 
-let provider, signer, me, guessSigner, guessRead;
+let provider, signer, me;
+let guessRead, guessSigner, token;
+let tokenDecimals = 0;
 let currentQid = 0;
 
 function set(id, text) { document.getElementById(id).textContent = text; }
@@ -14,23 +16,27 @@ async function connect() {
     me = accounts[0];
 
     const chainIdHex = await window.ethereum.request({ method: "eth_chainId" });
-
     provider = new ethers.BrowserProvider(window.ethereum);
     signer = await provider.getSigner();
-    const network = await provider.getNetwork();
 
     set("msg", "✅ 已連線錢包：" + me);
-    set("chain", `目前 chainId：${chainIdHex}（ethers 看到的是 ${network.chainId.toString()}）`);
+    set("chain", "chainId: " + chainIdHex);
 
     if (chainIdHex !== "0xaa36a7") {
-      set("qc", "❌ 請切到 Sepolia 再讀合約");
+      set("qc", "❌ 請切到 Sepolia");
       return;
     }
 
     guessRead = new ethers.Contract(GUESS_ADDRESS, GUESS_ABI, provider);
     guessSigner = new ethers.Contract(GUESS_ADDRESS, GUESS_ABI, signer);
 
+    // 讀 betToken
+    const tokenAddr = await guessRead.betToken();
+    token = new ethers.Contract(tokenAddr, ERC20_ABI, signer);
+    tokenDecimals = await token.decimals();
+
     await render();
+
   } catch (err) {
     set("txmsg", "❌ " + (err.message || err));
     console.error(err);
@@ -41,14 +47,12 @@ async function render() {
   set("txmsg", "");
   show("btnClaim", false);
   show("btnRefund", false);
+  show("betUI", false);
 
   const count = await guessRead.questionsCount();
-  set("qc", `✅ 合約題目數量 questionsCount = ${count.toString()}`);
+  set("qc", `題目數量 = ${count.toString()}`);
 
-  if (count === 0n) {
-    document.getElementById("ui").innerHTML = "（目前沒有題目）";
-    return;
-  }
+  if (count === 0n) return;
 
   currentQid = 0;
   const q = await guessRead.getQuestion(currentQid);
@@ -57,79 +61,55 @@ async function render() {
   const options = q[1];
   const status = Number(q[2]);
   const win = Number(q[3]);
-  const totalPoolRaw = q[4].toString();
-
-  const statusText = status === 0 ? "Open（可下注）" : "Resolved（已公布，不可下注）";
 
   const lines = [];
-  lines.push(`<h2>Q${currentQid}: ${text}</h2>`);
-  lines.push(`<div>狀態：<b>${statusText}</b></div>`);
-  lines.push(`<div>總池（raw）：${totalPoolRaw}</div>`);
-  lines.push(`<div style="margin-top:8px;"><b>選項：</b></div>`);
-  lines.push(`<ol>` + options.map((o, i) => `<li>${i}: ${o}</li>`).join("") + `</ol>`);
+  lines.push(`<h2>${text}</h2>`);
+  lines.push(`<div>狀態：${status === 0 ? "Open" : "Resolved"}</div>`);
+  lines.push(`<ol>` + options.map((o,i)=>`<li>${i}: ${o}</li>`).join("") + `</ol>`);
 
-  if (status === 1) {
-    lines.push(`<div><b>答案：</b>${win}（${options[win]}）</div>`);
+  document.getElementById("ui").innerHTML = lines.join("");
 
-    const alreadyClaimed = await guessRead.claimed(currentQid, me);
-    const totalWinStake = await guessRead.totalStakedPerOption(currentQid, win);
-
-    if (alreadyClaimed) {
-      lines.push(`<div style="color:green;">你已經領過（claimed=true）</div>`);
-    } else {
-      const myWinStake = await guessRead.userStake(currentQid, me, win);
-
-      if (myWinStake > 0n) {
-        lines.push(`<div style="color:green;">你押中答案，stake(raw)=${myWinStake.toString()}，可以 Claim</div>`);
-        show("btnClaim", true);
-      } else {
-        // ✅ 只有 totalWinStake == 0 才能 refund
-        if (totalWinStake === 0n) {
-          lines.push(`<div style="color:#999;">無人押中答案，可以 Refund（退回自己押的總額）</div>`);
-          show("btnRefund", true);
-        } else {
-          lines.push(`<div style="color:#999;">你沒有押中答案（或未下注）</div>`);
-          lines.push(`<div style="color:#999;">本題有人押中（winning option 總押注 raw=${totalWinStake.toString()}），因此不能 Refund</div>`);
-        }
-      }
-    }
+  if (status === 0) {
+    // Open：顯示下注 UI
+    const sel = document.getElementById("betOpt");
+    sel.innerHTML = options.map((o,i)=>`<option value="${i}">${i}: ${o}</option>`).join("");
+    show("betUI", true);
   } else {
-    lines.push(`<div style="color:#999;">（Open 題目：下注 UI 下一步加）</div>`);
-  }
-
-  document.getElementById("ui").innerHTML = lines.join("\n");
-}
-
-async function claimNow() {
-  try {
-    set("txmsg", "送出 Claim 交易中…");
-    const tx = await guessSigner.claim(currentQid);
-    set("txmsg", "等待鏈上確認… tx=" + tx.hash);
-    await tx.wait();
-    set("txmsg", "✅ Claim 成功");
-    await render();
-  } catch (err) {
-    set("txmsg", "❌ Claim 失敗：" + (err.shortMessage || err.message || err));
-    console.error(err);
+    // Resolved
+    lines.push(`<div>答案：${win}（${options[win]}）</div>`);
+    document.getElementById("ui").innerHTML = lines.join("");
   }
 }
 
-async function refundNow() {
+async function betNow() {
   try {
-    set("txmsg", "送出 Refund 交易中…");
-    const tx = await guessSigner.refund(currentQid);
-    set("txmsg", "等待鏈上確認… tx=" + tx.hash);
-    await tx.wait();
-    set("txmsg", "✅ Refund 成功");
+    const opt = Number(document.getElementById("betOpt").value);
+    const amt = Number(document.getElementById("betAmt").value);
+    if (!amt || amt <= 0) { alert("請輸入下注金額"); return; }
+
+    const amount = BigInt(amt) * 10n ** BigInt(tokenDecimals);
+
+    const allowance = await token.allowance(me, GUESS_ADDRESS);
+    if (allowance < amount) {
+      set("txmsg", "送出 approve…");
+      const tx1 = await token.approve(GUESS_ADDRESS, amount);
+      await tx1.wait();
+    }
+
+    set("txmsg", "送出 bet…");
+    const tx2 = await guessSigner.bet(currentQid, opt, amount);
+    await tx2.wait();
+
+    set("txmsg", "✅ 下注成功");
     await render();
+
   } catch (err) {
-    set("txmsg", "❌ Refund 失敗：" + (err.shortMessage || err.message || err));
+    set("txmsg", "❌ 下注失敗：" + (err.shortMessage || err.message || err));
     console.error(err);
   }
 }
 
 window.addEventListener("load", () => {
   document.getElementById("connectBtn").onclick = connect;
-  document.getElementById("btnClaim").onclick = claimNow;
-  document.getElementById("btnRefund").onclick = refundNow;
+  document.getElementById("btnBet").onclick = betNow;
 });
