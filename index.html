@@ -1,75 +1,78 @@
 <!doctype html>
-<html lang="zh-TW">
+<html lang="zh-Hant">
 <head>
   <meta charset="utf-8" />
-  <title>Guess Web</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Internal Guess Game</title>
   <style>
-    body { font-family: sans-serif; margin: 20px; }
-    .wrap { display: flex; gap: 16px; }
-    .list { width: 35%; border-right: 1px solid #ddd; padding-right: 12px; min-height: 520px; }
-    .item { cursor: pointer; padding: 10px; border-bottom: 1px solid #eee; }
-    .item:hover { background: #f5f5f5; }
-    .active { background: #e8f0ff; }
-    .content { width: 65%; }
-
-    .box { border:1px solid #ddd; padding:12px; margin: 12px 0; }
-    input, select { padding: 8px; font-size: 14px; }
-    button { padding: 8px 12px; font-size: 14px; cursor: pointer; }
-    .muted { color: #777; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, "Noto Sans TC", sans-serif; margin: 24px; }
+    h1 { font-size: 44px; margin: 0 0 16px; }
+    button { padding: 8px 12px; cursor: pointer; }
+    input, textarea { padding: 8px; width: 100%; box-sizing: border-box; }
+    .row { display: flex; gap: 16px; }
+    .col { flex: 1; }
+    .card { border: 1px solid #ddd; border-radius: 10px; padding: 14px; margin: 12px 0; }
+    .muted { color: #666; }
+    .ok { color: #0a7a2f; font-weight: 700; }
+    .err { color: #b00020; font-weight: 700; }
+    .list { max-height: 420px; overflow: auto; border: 1px solid #eee; border-radius: 10px; }
+    .list button { width: 100%; text-align: left; background: #f6f8ff; border: 1px solid #e5eaff; border-radius: 10px; margin: 8px; padding: 12px; }
+    .kv { display: grid; grid-template-columns: 140px 1fr; gap: 8px 12px; }
+    .actions { display:flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
+    .pill { display:inline-block; padding: 2px 8px; border-radius: 999px; background:#eee; font-size: 12px; }
+    .grid2 { display:grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .small { font-size: 12px; }
   </style>
 </head>
 <body>
   <h1>Internal Guess Game</h1>
 
-  <button id="connectBtn">Connect MetaMask</button>
-  <div id="msg"></div>
-  <div id="chain"></div>
+  <div class="card">
+    <button id="btnConnect">Connect MetaMask</button>
+    <div id="connStatus" class="muted" style="margin-top:10px;"></div>
+    <div id="chainStatus" class="muted" style="margin-top:6px;"></div>
+  </div>
 
-  <hr/>
+  <div class="row">
+    <div class="col">
+      <div class="card">
+        <h2 style="margin:0 0 10px;">題目列表</h2>
+        <div id="qCount" class="muted small"></div>
+        <div id="qList" class="list"></div>
+      </div>
+    </div>
 
-  <div class="wrap">
-    <div class="list" id="list"></div>
-
-    <div class="content">
-      <!-- ✅ 出題區塊：永遠顯示，不做 owner 檢核 -->
-      <div class="box" id="createBox">
-        <h3>出題</h3>
-        <div id="hint" class="muted">尚未連線</div>
-
-        <div style="margin-top:8px;">題目文字</div>
-        <input id="newQText" style="width:100%;" placeholder="例如：下週誰會遲到？"/>
-
-        <div style="margin-top:8px;">選項（用逗號分隔）</div>
-        <input id="newQOpts" style="width:100%;" placeholder="例如：A,B,C"/>
-
-        <button id="btnCreate" style="margin-top:10px;">Create Question</button>
+    <div class="col">
+      <div class="card">
+        <h2 style="margin:0 0 10px;">題目詳情</h2>
+        <div id="qDetail" class="muted">請先連線，並從左側選一題。</div>
       </div>
 
-      <div id="detail"></div>
+      <div class="card">
+        <h2 style="margin:0 0 10px;">出題</h2>
+        <div class="muted small">（已移除 owner 檢核：任何人都可以送出交易。如果合約本身有限制，會 revert。）</div>
 
-      <div class="box" id="betUI" style="display:none;">
-        <h3>下注</h3>
-        <div>
-          <select id="betOpt"></select>
+        <div style="margin-top:10px;">
+          <div class="muted small">題目文字</div>
+          <textarea id="newText" rows="2" placeholder="例：下週誰會遲到？"></textarea>
         </div>
-        <div style="margin-top:8px;">
-          <input id="betAmt" type="number" placeholder="下注金額（例如 100）"/>
-          <span id="tokenSym" class="muted"></span>
+
+        <div style="margin-top:10px;">
+          <div class="muted small">選項（用逗號分隔）</div>
+          <input id="newOptions" placeholder="例：A,B,C" />
         </div>
-        <button id="btnBet" style="margin-top:10px;">Approve + Bet</button>
-      </div>
 
-      <div style="margin-top:12px;">
-        <button id="btnClaim" style="display:none;">Claim</button>
-        <button id="btnRefund" style="display:none;">Refund</button>
-      </div>
+        <div class="actions">
+          <button id="btnCreate">送出出題交易（createQuestion）</button>
+        </div>
 
-      <div id="txmsg" style="margin-top:10px;"></div>
+        <div id="createStatus" class="muted small" style="margin-top:10px;"></div>
+      </div>
     </div>
   </div>
 
+  <!-- ethers v6 UMD -->
   <script src="https://cdn.jsdelivr.net/npm/ethers@6.13.2/dist/ethers.umd.min.js"></script>
-  <script src="./abi.js"></script>
   <script src="./app.js"></script>
 </body>
 </html>
