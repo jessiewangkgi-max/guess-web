@@ -1,22 +1,14 @@
 const GUESS_ABI = [
+  // --- Ownable ---
   {
-  "type": "function",
-  "name": "owner",
-  "inputs": [],
-  "outputs": [{ "type": "address" }],
-  "stateMutability": "view"
-},
-{
-  "type": "function",
-  "name": "createQuestion",
-  "inputs": [
-    { "name": "text", "type": "string" },
-    { "name": "options", "type": "string[]" }
-  ],
-  "outputs": [{ "type": "uint256" }],
-  "stateMutability": "nonpayable"
-},
-  // ✅ 新增：betToken() getter
+    "type": "function",
+    "name": "owner",
+    "inputs": [],
+    "outputs": [{ "type": "address" }],
+    "stateMutability": "view"
+  },
+
+  // --- token getter ---
   {
     "type": "function",
     "name": "betToken",
@@ -25,7 +17,7 @@ const GUESS_ABI = [
     "stateMutability": "view"
   },
 
-  // views
+  // --- views ---
   {
     "type": "function",
     "name": "questionsCount",
@@ -40,7 +32,7 @@ const GUESS_ABI = [
     "outputs": [
       { "name": "text", "type": "string" },
       { "name": "options", "type": "string[]" },
-      { "name": "status", "type": "uint8" },
+      { "name": "status", "type": "uint8" },           // 0 Open, 1 Resolved
       { "name": "winningOption", "type": "uint256" },
       { "name": "totalPool", "type": "uint256" }
     ],
@@ -78,7 +70,19 @@ const GUESS_ABI = [
     "stateMutability": "view"
   },
 
-  // tx
+  // --- tx: admin ---
+  {
+    "type": "function",
+    "name": "createQuestion",
+    "inputs": [
+      { "name": "text", "type": "string" },
+      { "name": "options", "type": "string[]" }
+    ],
+    "outputs": [{ "type": "uint256" }],
+    "stateMutability": "nonpayable"
+  },
+
+  // --- tx: user ---
   {
     "type": "function",
     "name": "bet",
