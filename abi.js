@@ -1,5 +1,5 @@
-// InternalGuessGame 最小可用 ABI（讀題目）
 const GUESS_ABI = [
+  // views
   {
     "type": "function",
     "name": "questionsCount",
@@ -19,5 +19,42 @@ const GUESS_ABI = [
       { "name": "totalPool", "type": "uint256" }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "userStake",
+    "inputs": [
+      { "name": "questionId", "type": "uint256" },
+      { "name": "user", "type": "address" },
+      { "name": "optionId", "type": "uint256" }
+    ],
+    "outputs": [{ "type": "uint256" }],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "claimed",
+    "inputs": [
+      { "name": "questionId", "type": "uint256" },
+      { "name": "user", "type": "address" }
+    ],
+    "outputs": [{ "type": "bool" }],
+    "stateMutability": "view"
+  },
+
+  // tx
+  {
+    "type": "function",
+    "name": "claim",
+    "inputs": [{ "name": "questionId", "type": "uint256" }],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "refund",
+    "inputs": [{ "name": "questionId", "type": "uint256" }],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   }
 ];
